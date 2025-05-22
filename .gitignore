@@ -1,0 +1,12 @@
+# 生成的圖片文件
+*.png
+*.svg
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# 系統文件
+.DS_Store
+.env
+*.log
