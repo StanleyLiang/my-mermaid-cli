@@ -1,0 +1,13 @@
+{
+  "name": "mermaid-nats-service",
+  "version": "1.0.0",
+  "description": "Mermaid diagram generation service with NATS",
+  "main": "server.js",
+  "scripts": {
+    "test": "node test-publish.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "nats": "^2.29.3"
+  }
+}

@@ -9,10 +9,12 @@ VERSION := 1.0.0
 .PHONY: help
 help:
 	@echo "使用說明:"
-	@echo "  make build    - 構建 Docker 映像"
-	@echo "  make push     - 推送映像到 Docker Hub"
-	@echo "  make test     - 執行所有測試"
-	@echo "  make clean    - 清理本地映像"
+	@echo "  make build              - 構建 Docker 映像"
+	@echo "  make test-nats         - 測試 NATS 服務"
+	@echo "  make clean             - 清理本地映像"
+	@echo "  make run-nats          - 運行 NATS 服務器"
+	@echo "  make run-service       - 運行 Mermaid 服務"
+	@echo "  make test-send         - 發送測試消息"
 
 # 構建映像
 .PHONY: build
@@ -20,38 +22,63 @@ build:
 	docker build -t $(IMAGE_NAME):$(VERSION) .
 	docker tag $(IMAGE_NAME):$(VERSION) $(IMAGE_NAME):latest
 
-# 測試映像
-.PHONY: test
-test: test-svg test-png test-themes
+# 清理容器和網絡
+.PHONY: clean-containers
+clean-containers:
+	@echo "Stopping containers..."
+	-docker stop nats mermaid-service 2>/dev/null || true
+	@echo "Removing network..."
+	-docker network rm mermaid-test 2>/dev/null || true
 
-.PHONY: test-svg
-test-svg:
-	@echo "測試 SVG 輸出..."
-	@echo 'graph TD\nA[SVG測試] --> B[成功]' > test-svg.mmd
-	docker run --rm -v $$(pwd):/data $(IMAGE_NAME):$(VERSION) -i test-svg.mmd -o test-svg.svg
+# 運行 NATS 服務器
+.PHONY: run-nats
+run-nats: clean-containers
+	docker run --rm --name nats -p 4222:4222 -p 8222:8222 nats:latest
 
-.PHONY: test-png
-test-png:
-	@echo "測試 PNG 輸出..."
-	@echo 'graph TD\nA[PNG測試] --> B[成功]' > test-png.mmd
-	docker run --rm -v $$(pwd):/data $(IMAGE_NAME):$(VERSION) -i test-png.mmd -o test-png.png
+# 運行 Mermaid 服務
+.PHONY: run-service
+run-service: clean-containers
+	docker run --rm --name mermaid-service \
+		--network host \
+		-v $$(pwd)/output:/data/output \
+		-e NATS_URL=nats://localhost:4222 \
+		$(IMAGE_NAME):latest
 
-.PHONY: test-themes
-test-themes:
-	@echo "測試不同主題..."
-	@echo 'graph TD\nA[主題測試] --> B[預設主題]\nA --> C[深色主題]\nA --> D[森林主題]' > test-themes.mmd
-	docker run --rm -v $$(pwd):/data $(IMAGE_NAME):$(VERSION) -i test-themes.mmd -o test-default.png
-	docker run --rm -v $$(pwd):/data $(IMAGE_NAME):$(VERSION) -i test-themes.mmd -o test-dark.png -t dark
-	docker run --rm -v $$(pwd):/data $(IMAGE_NAME):$(VERSION) -i test-themes.mmd -o test-forest.png -t forest
+# 發送測試消息
+.PHONY: test-send
+test-send:
+	@echo "發送測試消息到 NATS..."
+	cd src && node test-publish.js
 
-# 推送映像
-.PHONY: push
-push:
-	docker push $(IMAGE_NAME):$(VERSION)
-	docker push $(IMAGE_NAME):latest
+# 測試 NATS 服務
+.PHONY: test-nats
+test-nats: clean build clean-containers
+	@echo "啟動測試環境..."
+	mkdir -p output
+	docker network create mermaid-test || true
+	docker run -d --rm --name nats --network mermaid-test nats:latest
+	sleep 2
+	@echo "啟動 Mermaid 服務..."
+	docker run -d --rm --name mermaid-service \
+		--network mermaid-test \
+		-v $$(pwd)/output:/data/output \
+		-e NATS_URL=nats://nats:4222 \
+		$(IMAGE_NAME):latest
+	@echo "等待服務啟動..."
+	sleep 3
+	@echo "發送測試消息..."
+	cd src && NODE_ENV=test NATS_URL=nats://localhost:4222 node test-publish.js
+	@echo "等待處理完成..."
+	sleep 3
+	@echo "服務日誌..."
+	docker logs mermaid-service
+	@echo "檢查輸出目錄..."
+	ls -l output/
+	@echo "測試完成，正在清理環境..."
+	make clean-containers
 
 # 清理
 .PHONY: clean
-clean:
+clean: clean-containers
 	docker rmi $(IMAGE_NAME):$(VERSION) $(IMAGE_NAME):latest 2>/dev/null || true
-	rm -f test-*.mmd test-*.png test-*.svg 2>/dev/null || true
+	rm -rf output/* 2>/dev/null || true
